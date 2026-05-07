@@ -1,11 +1,12 @@
 // Controlador CRUD de Productos usando políticas ABAC
-const Producto = require('../models/Producto');
+const prisma = require('../prisma/client');
 
 // GET /api/productos
 exports.list = async (req, res, next) => {
   try {
     const where = (req.abac && req.abac.where) || {};
-    const items = await Producto.findAll({ where, order: [['id', 'ASC']] });
+    // Prisma: construimos filtro dinámico según ABAC
+    const items = await prisma.producto.findMany({ where, orderBy: { id: 'asc' } });
     res.json(items);
   } catch (err) { next(err); }
 };
@@ -24,7 +25,7 @@ exports.create = async (req, res, next) => {
     const body = req.body;
     // creado_por viene del usuario autenticado
     body.creado_por = req.user.id;
-    const created = await Producto.create(body);
+    const created = await prisma.producto.create({ data: body });
     res.status(201).json(created);
   } catch (err) { next(err); }
 };
@@ -47,9 +48,13 @@ exports.update = async (req, res, next) => {
       // Si hay cambio de tienda_id del Gerente a otra tienda, ya fue impedido en policy
     }
 
-    prod.fecha_actualizacion = new Date();
-    await prod.save();
-    res.json(prod);
+    // Construir payload de actualización seguro (nunca enviar id ni fechas de creación)
+    const base = req.abacUpdate && Array.isArray(req.abacUpdate.allowedFields)
+      ? Object.fromEntries(Object.entries(update).filter(([k]) => req.abacUpdate.allowedFields.includes(k)))
+      : update;
+    const { id: _omitId, fecha_creacion: _fc, fecha_actualizacion: _fa, creado_por: _cp, ...data } = base;
+    const saved = await prisma.producto.update({ where: { id: prod.id }, data: { ...data, fecha_actualizacion: new Date() } });
+    res.json(saved);
   } catch (err) { next(err); }
 };
 
@@ -57,7 +62,7 @@ exports.update = async (req, res, next) => {
 exports.remove = async (req, res, next) => {
   try {
     const prod = req.product; // validado en policy
-    await prod.destroy();
+    await prisma.producto.delete({ where: { id: prod.id } });
     res.json({ message: 'Producto eliminado' });
   } catch (err) { next(err); }
 };

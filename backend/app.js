@@ -4,8 +4,8 @@ require('dotenv').config();
 const express = require('express');
 // CORS para permitir peticiones desde el frontend
 const cors = require('cors');
-// Conexión a la base de datos con Sequelize
-const { sequelize } = require('./config/database');
+// Prisma Client centralizado (reemplaza a Sequelize)
+const prisma = require('./prisma/client');
 // Rutas de autenticación (registro, login, MFA)
 const authRoutes = require('./routes/auth.routes');
 // Rutas de roles (CRUD con RBAC)
@@ -41,12 +41,11 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 4000;
 
-// Inicializa la conexión a la BD y arranca el servidor HTTP
+// Inicializa la conexión a la BD (Prisma) y arranca el servidor HTTP
 (async () => {
   try {
-    await sequelize.authenticate(); // Verifica credenciales y conectividad
-    console.log('DB connection established');
-    await sequelize.sync(); // Sincroniza modelos con la BD (crea tablas si no existen)
+    await prisma.$connect(); // Verifica credenciales y conectividad mediante Prisma
+    console.log('DB connection established (Prisma)');
     app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
   } catch (err) {
     console.error('Unable to start server', err);

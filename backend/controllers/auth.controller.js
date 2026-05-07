@@ -4,11 +4,7 @@ const bcrypt = require('bcryptjs'); // hashing de contraseñas
 const jwt = require('jsonwebtoken'); // emisión/validación de JWT
 const QRCode = require('qrcode'); // generación de QR para TOTP
 const speakeasy = require('speakeasy'); // TOTP (Google Authenticator)
-const { Op } = require('sequelize');
-const Usuario = require('../models/Usuario');
-const Tienda = require('../models/Tienda');
-const UsuarioRol = require('../models/UsuarioRol'); // relación usuario-rol
-const Rol = require('../models/Rol'); // modelo de roles
+const prisma = require('../prisma/client');
 
 // RegEx para contraseña segura: min 8, 1 mayúscula, 1 dígito, 1 especial
 const PASSWORD_REGEX = /^(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9]).{8,}$/;
@@ -52,11 +48,8 @@ function verifyAuthJwtFromHeader(authorization) {
 
 // Obtiene los nombres de roles asociados a un usuario
 async function getUserRoleNames(userId) {
-  const links = await UsuarioRol.findAll({ where: { usuario_id: userId } });
-  const roleIds = links.map(l => l.rol_id);
-  if (!roleIds.length) return [];
-  const roles = await Rol.findAll({ where: { id: roleIds } });
-  return roles.map(r => r.nombre);
+  const links = await prisma.usuarioRol.findMany({ where: { usuario_id: userId }, include: { rol: true } });
+  return links.map(l => l.rol.nombre);
 }
 
 // POST /api/auth/register
@@ -76,14 +69,14 @@ exports.register = async (req, res, next) => {
     }
 
     // Email único
-    const exists = await Usuario.findOne({ where: { email } });
+    const exists = await prisma.usuario.findUnique({ where: { email } });
     if (exists) {
       return res.status(409).json({ message: 'Email ya registrado' });
     }
 
     // Validación de tienda si se provee
     if (tienda_id) {
-      const tienda = await Tienda.findByPk(tienda_id);
+      const tienda = await prisma.tienda.findUnique({ where: { id: tienda_id } });
       if (!tienda) return res.status(400).json({ message: 'tienda_id inválido' });
     }
 
@@ -92,14 +85,16 @@ exports.register = async (req, res, next) => {
     const hash = await bcrypt.hash(password, salt);
 
     // Crea usuario activo con MFA deshabilitado por defecto
-    const user = await Usuario.create({
-      email,
-      password: hash,
-      nombre_completo,
-      tienda_id: tienda_id || null,
-      activo: true,
-      intentos_fallidos: 0,
-      mfa_habilitado: false,
+    const user = await prisma.usuario.create({
+      data: {
+        email,
+        password: hash,
+        nombre_completo,
+        tienda_id: tienda_id || null,
+        activo: true,
+        intentos_fallidos: 0,
+        mfa_habilitado: false,
+      }
     });
 
     return res.status(201).json({
@@ -121,7 +116,7 @@ exports.login = async (req, res, next) => {
     const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ message: 'email y password son requeridos' });
 
-    const user = await Usuario.findOne({ where: { email } });
+    const user = await prisma.usuario.findUnique({ where: { email } });
     if (!user) return res.status(401).json({ message: 'Credenciales inválidas' });
 
     // Verifica si la cuenta está bloqueada
@@ -135,19 +130,15 @@ exports.login = async (req, res, next) => {
     if (!match) {
       const nuevosIntentos = (user.intentos_fallidos || 0) + 1;
       if (nuevosIntentos >= 5) {
-        user.intentos_fallidos = 0;
-        user.bloqueado_hasta = new Date(Date.now() + 15 * 60000); // 15 minutos
+        await prisma.usuario.update({ where: { id: user.id }, data: { intentos_fallidos: 0, bloqueado_hasta: new Date(Date.now() + 15 * 60000) } });
       } else {
-        user.intentos_fallidos = nuevosIntentos;
+        await prisma.usuario.update({ where: { id: user.id }, data: { intentos_fallidos: nuevosIntentos } });
       }
-      await user.save();
       return res.status(401).json({ message: 'Credenciales inválidas' });
     }
 
     // Resetea contadores en caso de éxito
-    user.intentos_fallidos = 0;
-    user.bloqueado_hasta = null;
-    await user.save();
+    await prisma.usuario.update({ where: { id: user.id }, data: { intentos_fallidos: 0, bloqueado_hasta: null } });
 
     // Si el usuario tiene MFA habilitado: emitir token MFA temporal
     if (user.mfa_habilitado) {
@@ -183,20 +174,18 @@ exports.enableMfa = async (req, res, next) => {
       userIdToUse = parsedAuth.userId;
     }
 
-    const user = await Usuario.findByPk(userIdToUse);
+    const user = await prisma.usuario.findUnique({ where: { id: userIdToUse } });
     if (!user) return res.status(404).json({ message: 'Usuario no encontrado' });
 
     // Genera secreto TOTP
     const secret = speakeasy.generateSecret({ name: `TechStore (${user.email})` });
-    user.mfa_secret = secret.base32; // guardamos en base32 para verificación
-    user.mfa_habilitado = false; // aún no habilitado hasta que verifique el código
-    await user.save();
+    await prisma.usuario.update({ where: { id: user.id }, data: { mfa_secret: secret.base32, mfa_habilitado: false } });
 
     // URL otpauth y QR base64
     const otpauthUrl = secret.otpauth_url;
     const qrDataUrl = await QRCode.toDataURL(otpauthUrl);
 
-    return res.json({ otpauthUrl, qrDataUrl });
+    return res.json({ otpauthUrl, otpauth: otpauthUrl, qrDataUrl });
   } catch (err) { next(err); }
 };
 
@@ -222,7 +211,7 @@ exports.verifyMfaSetup = async (req, res, next) => {
       userIdToUse = parsedAuth.userId;
     }
 
-    const user = await Usuario.findByPk(userIdToUse);
+    const user = await prisma.usuario.findUnique({ where: { id: userIdToUse } });
     if (!user || !user.mfa_secret) return res.status(400).json({ message: 'MFA no iniciado' });
 
     // Verifica el TOTP con ventana de 1 por tolerancia de reloj
@@ -235,8 +224,7 @@ exports.verifyMfaSetup = async (req, res, next) => {
 
     if (!verified) return res.status(401).json({ message: 'Código inválido' });
 
-    user.mfa_habilitado = true;
-    await user.save();
+    await prisma.usuario.update({ where: { id: user.id }, data: { mfa_habilitado: true } });
 
     return res.json({ message: 'MFA habilitado correctamente' });
   } catch (err) { next(err); }
@@ -261,7 +249,7 @@ exports.verifyMfa = async (req, res, next) => {
       return res.status(401).json({ message: 'mfaToken inválido o expirado' });
     }
 
-    const user = await Usuario.findByPk(userId);
+    const user = await prisma.usuario.findUnique({ where: { id: userId } });
     if (!user || !user.mfa_secret || !user.mfa_habilitado) {
       return res.status(400).json({ message: 'MFA no habilitado para este usuario' });
     }

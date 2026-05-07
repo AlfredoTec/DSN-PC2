@@ -6,7 +6,7 @@
 // - UPDATE: Admin -> cualquier campo; Gerente -> cualquier campo en su tienda excepto categoria; Empleado -> solo stock en su tienda; Auditor -> sin acceso
 // - DELETE: Admin -> cualquiera; Gerente -> solo NO premium en su tienda; Empleado/Auditor -> sin acceso
 
-const Producto = require('../models/Producto');
+const prisma = require('../prisma/client');
 
 function hasRole(user, roleName) {
   return (user.roles || []).includes(roleName);
@@ -44,6 +44,7 @@ exports.listPolicy = (req, res, next) => {
     return res.status(403).json({ message: 'Acceso denegado' });
   }
 
+  // req.abac.where transporta el filtro a aplicar en la capa de datos (controllers -> Prisma)
   req.abac = { where };
   logAbac(user, 'PRODUCT_LIST', { where });
   next();
@@ -58,10 +59,11 @@ exports.getOnePolicy = async (req, res, next) => {
   const isGerente = hasRole(user, 'Gerente');
   const isEmpleado = hasRole(user, 'Empleado');
 
-  const prod = await Producto.findByPk(id);
+  const prod = await prisma.producto.findUnique({ where: { id: Number(id) } });
   if (!prod) return res.status(404).json({ message: 'Producto no encontrado' });
 
   if (isAdmin || isAuditor) {
+    // req.product pasa el recurso autorizado al controlador para evitar releerlo sin control
     req.product = prod;
     logAbac(user, 'PRODUCT_VIEW', { id: prod.id, tienda_id: prod.tienda_id });
     return next();
@@ -122,7 +124,7 @@ exports.updatePolicy = async (req, res, next) => {
   const isAuditor = hasRole(user, 'Auditor');
   const { id } = req.params;
 
-  const prod = await Producto.findByPk(id);
+  const prod = await prisma.producto.findUnique({ where: { id: Number(id) } });
   if (!prod) return res.status(404).json({ message: 'Producto no encontrado' });
 
   if (isAuditor) return res.status(403).json({ message: 'Acceso denegado' });
@@ -130,6 +132,7 @@ exports.updatePolicy = async (req, res, next) => {
   // Admin: puede todo
   if (isAdmin) {
     req.product = prod;
+    // req.abacUpdate permite a controller saber si debe filtrar campos (Empleado) o aplicar todo (Admin/Gerente validado)
     req.abacUpdate = { allowedFields: 'ALL' };
     logAbac(user, 'PRODUCT_UPDATE_ATTEMPT', { id: prod.id });
     return next();
@@ -173,7 +176,7 @@ exports.deletePolicy = async (req, res, next) => {
   const isAuditor = hasRole(user, 'Auditor');
   const { id } = req.params;
 
-  const prod = await Producto.findByPk(id);
+  const prod = await prisma.producto.findUnique({ where: { id: Number(id) } });
   if (!prod) return res.status(404).json({ message: 'Producto no encontrado' });
 
   if (isAdmin) {
