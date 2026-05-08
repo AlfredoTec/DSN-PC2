@@ -1,0 +1,85 @@
+// Prisma schema para TechStore (PostgreSQL)
+// Alineado con las tablas existentes del proyecto Sequelize
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  // Prisma 7: la URL para Migrate se define en prisma.config.ts
+}
+
+model Tienda {
+  id        Int        @id @default(autoincrement())
+  nombre    String
+  ubicacion String
+  // Relaciones
+  usuarios  Usuario[]
+  productos Producto[]
+
+  @@map("tiendas")
+}
+
+model Usuario {
+  id                Int        @id @default(autoincrement())
+  email             String     @unique
+  password          String
+  nombre_completo   String
+  tienda_id         Int?
+  tienda            Tienda?    @relation(fields: [tienda_id], references: [id])
+  mfa_habilitado    Boolean    @default(false)
+  mfa_secret        String?
+  activo            Boolean    @default(true)
+  intentos_fallidos Int        @default(0)
+  bloqueado_hasta   DateTime?
+  fecha_creacion    DateTime   @default(now())
+  // Relaciones
+  roles             UsuarioRol[]
+  productos         Producto[]  @relation("ProductoCreador")
+
+  @@map("usuarios")
+}
+
+model Rol {
+  id              Int          @id @default(autoincrement())
+  nombre          String       @unique
+  descripcion     String?
+  fecha_creacion  DateTime     @default(now())
+  // Relaciones
+  usuarios        UsuarioRol[]
+
+  @@map("roles")
+}
+
+model UsuarioRol {
+  id               Int       @id @default(autoincrement())
+  usuario_id       Int
+  rol_id           Int
+  asignado_por     Int?
+  fecha_asignacion DateTime  @default(now())
+
+  usuario Usuario @relation(fields: [usuario_id], references: [id])
+  rol     Rol     @relation(fields: [rol_id], references: [id])
+
+  @@unique([usuario_id, rol_id])
+  @@map("usuario_roles")
+}
+
+model Producto {
+  id                 Int       @id @default(autoincrement())
+  nombre             String
+  descripcion        String?
+  precio             Decimal    @db.Decimal(12, 2)
+  stock              Int
+  categoria          String?
+  tienda_id          Int
+  tienda             Tienda    @relation(fields: [tienda_id], references: [id])
+  es_premium         Boolean   @default(false)
+  creado_por         Int?
+  creador            Usuario?  @relation("ProductoCreador", fields: [creado_por], references: [id])
+  fecha_creacion     DateTime  @default(now())
+  fecha_actualizacion DateTime?
+
+  @@map("productos")
+}

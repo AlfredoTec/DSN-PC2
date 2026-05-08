@@ -1,0 +1,83 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Tienda {
+  id        Int        @id @default(autoincrement())
+  nombre    String     @unique
+  createdAt DateTime   @default(now())
+  usuarios  Usuario[]
+  productos Producto[]
+}
+
+model Rol {
+  id             Int           @id @default(autoincrement())
+  nombre         String        @unique
+  descripcion    String?
+  fechaCreacion  DateTime      @default(now())
+  usuarios       UsuarioRol[]
+}
+
+model Usuario {
+  id               Int              @id @default(autoincrement())
+  email            String           @unique
+  password         String
+  nombreCompleto   String
+  tiendaId         Int
+  tienda           Tienda           @relation(fields: [tiendaId], references: [id])
+  mfaHabilitado    Boolean          @default(false)
+  mfaSecret        String?
+  activo           Boolean          @default(true)
+  fechaCreacion    DateTime         @default(now())
+  failedAttempts   Int              @default(0)
+  lockUntil        DateTime?
+  roles            UsuarioRol[]
+  productosCreados Producto[]       @relation("ProductosCreados")
+  asignacionesHechas UsuarioRol[]   @relation("AsignadoPor")
+  logs             LogAccion[]
+}
+
+model UsuarioRol {
+  id               Int      @id @default(autoincrement())
+  usuarioId        Int
+  rolId            Int
+  asignadoPorId    Int
+  fechaAsignacion  DateTime @default(now())
+  usuario          Usuario  @relation(fields: [usuarioId], references: [id])
+  rol              Rol      @relation(fields: [rolId], references: [id])
+  asignadoPor      Usuario  @relation("AsignadoPor", fields: [asignadoPorId], references: [id])
+
+  @@unique([usuarioId, rolId])
+}
+
+model Producto {
+  id                 Int      @id @default(autoincrement())
+  nombre             String
+  descripcion        String?
+  precio             Float
+  stock              Int
+  categoria          String
+  tiendaId           Int
+  tienda             Tienda   @relation(fields: [tiendaId], references: [id])
+  esPremium          Boolean  @default(false)
+  creadoPorId        Int
+  creadoPor          Usuario  @relation("ProductosCreados", fields: [creadoPorId], references: [id])
+  fechaCreacion      DateTime @default(now())
+  fechaActualizacion DateTime @updatedAt
+}
+
+model LogAccion {
+  id        Int       @id @default(autoincrement())
+  usuarioId Int?
+  usuario   Usuario?  @relation(fields: [usuarioId], references: [id])
+  accion    String
+  recurso   String?
+  resultado String
+  ip        String?
+  fecha     DateTime   @default(now())
+}
