@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
-    "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev",
+    "prisma:generate": "prisma generate --schema=src/prisma/schema.prisma",
+"prisma:migrate": "prisma migrate dev --schema=src/prisma/schema.prisma",
     "db:seed": "node src/prisma/seed.js",
     "db:test": "node src/prisma/test-connection.js"
   },
